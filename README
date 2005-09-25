@@ -1,0 +1,31 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=1369
+
+This script allows editing of WebDAV resources and is zope-aware. 
+This plugin does not conflict with netrw and catches the 
+webdav:// and zope:// url schemes.
+
+- Zope scheme
+zope://[username:password@]host[:port]/path/to/document urls are 
+GET using a "/document_src" suffix and
+PUT using no suffix
+
+- WebDAV scheme
+webdav://[username:password@]host[:port]/path/to/document urls are 
+GET using no suffix and
+PUT using no suffix
+
+- Using SSL
+Shall you need to use ssl, add an "s" prefix to the protocol, for instance
+szope://securedhost/some/private/document.dtml
+swebdav://securedhost/some/private/document
+
+- Options
+If you intent on editing every WebDAV resource under the "/source"
+url suffix or/and upload them back under the "/upload" suffix, use the
+following options in your .vimrc :
+let g:webdav_get_suffix = "/source"
+let g:webdav_put_suffix = "/upload"
+
+NB: No error handling is performed
+NB: See also vimscript #1075 
+
