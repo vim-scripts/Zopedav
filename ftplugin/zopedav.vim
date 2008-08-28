@@ -1,108 +1,158 @@
-" zopedav.vim: (global plugin) Handles file transfer with zope using WebDAV
-" Last Change:	Sep 25, 2005
+" zopedav.vim: (global plugin) Handles file transfer with WebDAV, adapted for zope
+" Last Change:	Aug 28, 2008
 " Maintainer:	Sébastien Migniot, <smigniot AT hotmail.com>
-" Version:	1
+" Version:	2
 " License:	Vim License  (see vim's :help license)
 " =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 " ---------------------------------------------------------------------
-" The WebDAV executable {{{
-let s:webdav_executable = "cadaver"
+" Configuration {{{
+let s:webdav_executable = 'curl'
+let s:webdav_get_suffix = ''
+let s:webdav_put_suffix = ''
 " }}}
 " ---------------------------------------------------------------------
-" WebDAV url parser {{{
+" Return a suffix {{{
 "
-" splits an url into base component
-" protocol://host:port/dirpath/filename
-function! <SID>ZopeCompute(url)
-    if !exists("b:tempfile")
-        let b:tempfile = tempname()
-    endif
-    
-    let s:protocol = match(a:url, "^[a-zA-Z]*\\zs://")
-    let s:fullhost = match(a:url, "/", s:protocol+3)
-    let s:dirpath  = match(a:url, "[^/]*$", s:fullhost+1)
-    let s:filename = strpart(a:url, s:dirpath)
-    let s:dirpath  = strpart(a:url, s:fullhost, s:dirpath-s:fullhost-1)
-    let s:fullhost = strpart(a:url, s:protocol+3, s:fullhost-s:protocol-3)
-    let s:protocol = strpart(a:url, 0, s:protocol)
-    let s:port     = match(s:fullhost, ":")
-    let s:host     = strpart(s:fullhost, 0, s:port)
-    let s:port     = strpart(s:fullhost, s:port+1)
-    if strlen(s:host) == 0
-        let s:host = s:port
-        let s:port = "80"
-    endif
-
-    let s:webdav_command_line = s:webdav_executable . " http://" . s:host . ":" . s:port . s:dirpath
+" Look for a named variable in
+" the buffer namespace first,
+" the global namespace then and
+" else in the script namespace
+"
+function! <SID>WebDAVGetSuffix(method)
+	" 1. Build variable name
+	let l:name = 'webdav_' . a:method . '_suffix'
+	" 2. Try buffer namespace
+	if exists('b:' . l:name)
+		return eval('b:' . l:name)
+	" 3. Try global namespace
+	elseif exists('g:' . l:name)
+		return eval('g:' . l:name)
+	" 4. Use script namespace
+	else
+		return eval('s:' . l:name)
+	endif
+endfunction
+" ---------------------------------------------------------------------
+" Compute a target url {{{
+"
+" Assume url starts with a protocol and a colon
+" for instance webdav://somehost/some/path/filename
+"
+" Return that url starting with 'http', or with
+" 'https' if the protocol starts with an 's'
+" and append suffix
+"
+" For instance swebdav://somehost:483/some/path/
+" Returns https://somehost:483/some/path/suffix
+"
+function! <SID>WebDAVURL(url, suffix)
+	" 1. Detect protocol colon
+	let l:index = stridx(a:url, ':')
+	" 2. Isolate content
+	let l:content = substitute(strpart(a:url, l:index),'\\','/','g')
+	" 4. Detect starting s
+	if a:url =~ '^s'
+		let l:prefix = 'https'
+	else
+		let l:prefix = 'http'
+	endif
+	" 5. Build url
+	return l:prefix . l:content . a:suffix
+endfunction
+" ---------------------------------------------------------------------
+" Read a webdav url content {{{
+"
+" Assume url starts with a protocol and a colon
+" for instance webdav://somehost/some/path/filename
+" and retrieves the content of the url, replacing
+" the protocol and appending webdav_get_suffix
+"
+function! <SID>WebDAVGet(url)
+	" 1. Create a tempfile if required
+	if !exists('b:webdav_tempfile')
+		let b:webdav_tempfile = tempname()
+	endif
+	" 2. Compute target URL
+	let l:target_url = <SID>WebDAVURL(a:url, <SID>WebDAVGetSuffix('get'))
+	" 3. Run WebDAV GET command
+	silent exe "!" . s:webdav_executable . ' -o "' .b:webdav_tempfile . '" "' . l:target_url . '"'
+	" 4. Insert the tempfile
+	exe "0read " . b:webdav_tempfile
+	" 5. Fixup last blank line
+	$delete
 endfunction
 " }}}
 " ---------------------------------------------------------------------
-" Run a cadaver script {{{
+" Write a webdav url content {{{
 "
-" write a script file for cadaver
-" and run cmd against it
-function! <SID>ZopeScript(lines)
-    if !exists("b:scriptfile")
-        let b:scriptfile = tempname()
-    endif
-
-    exe "new " . b:scriptfile
-    if !append('.', a:lines)
-        silent exe "write!"
-        bdelete!
-        silent exe "!" . s:webdav_command_line . " < " . b:scriptfile
-    endif
+" Assume url starts with the webdav_protocol
+" for instance webdav://somehost/some/path/filename
+" and stores the content of the url, replacing
+" the protocol by webdav_target_protocol and appending
+" webdav_put_suffix
+"
+function! <SID>WebDAVPut(url)
+	" 1. Save current buffer
+	exe "write! " . b:webdav_tempfile
+	set nomodified
+	" 2. Compute target URL
+	let l:target_url = <SID>WebDAVURL(a:url, <SID>WebDAVGetSuffix('put'))
+	" 3. Run WebDAV PUT command
+	silent exe "!" . s:webdav_executable . ' -T "' . b:webdav_tempfile. '" "' . l:target_url . '"'
 endfunction
 " }}}
 " ---------------------------------------------------------------------
-" Edit a Zope WebDAV document source {{{
+" Set zope webdav suffixes {{{
 "
-" splits the url and
-" retrieve document_src
-function! <SID>ZopeGet(url)
-    call <SID>ZopeCompute(a:url)
-    let tempfile = b:tempfile
-    call <SID>ZopeScript("get " . s:filename . "/document_src " . b:tempfile)
-    let scriptfile = b:scriptfile
-    silent exe "edit! " . b:tempfile
-    silent exe "file " . a:url
-    let b:tempfile = tempfile
-    let b:scriptfile = scriptfile
-endfunction
-" }}}
-" ---------------------------------------------------------------------
-" Write a Zope WebDAV document {{{
+" Zope editing uses /document_src to get a non
+" published source document and no suffix for
+" source uploading
 "
-" splits the url and
-" write filename
-function! <SID>ZopePut(url)
-    call <SID>ZopeCompute(a:url)
-    let tempfile = b:tempfile
-    silent exe "write! " . b:tempfile
-    call <SID>ZopeScript("put " . b:tempfile . " " . s:filename)
-    let scriptfile = b:scriptfile
-    silent exe "file " . a:url
-    let b:scriptfile = scriptfile
-    let b:tempfile = tempfile
+function! <SID>WebDAVZopeSuffixes()
+	let b:webdav_get_suffix = '/document_src'
+	let b:webdav_put_suffix = ''
 endfunction
-" }}}
 " ---------------------------------------------------------------------
-" Zope WebDAV commands {{{
-command -nargs=1 ZopeGet call <SID>ZopeGet(<f-args>)
-command -nargs=1 ZopePut call <SID>ZopePut(<f-args>)
+" WebDAV commands {{{
+"
+command! -nargs=0 WebDAVZopeSuffixes call <SID>WebDAVZopeSuffixes()
+command! -nargs=1 WebDAVGet call <SID>WebDAVGet(<f-args>)
+command! -nargs=1 WebDAVPut call <SID>WebDAVPut(<f-args>)
 " }}}
 " ---------------------------------------------------------------------
 " Auto commands for Zope {{{
 "
 " Handles transparent reading and writing
 " of Zope WebDAV urls
+"
 if version >= 600
- augroup Zope
- au!
- au BufReadCmd zope://* exe "doau BufReadPre ".expand("<afile>")|exe "ZopeGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
- au FileReadCmd zope://* exe "doau BufReadPre ".expand("<afile>")|exe "ZopeGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
- au BufWriteCmd zope://* exe "ZopePut ".expand("<afile>")
+	augroup Zope
+	au!
+	au BufReadCmd zope://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVZopeSuffixes"|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au BufReadCmd szope://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVZopeSuffixes"|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au FileReadCmd zope://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVZopeSuffixes"|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au FileReadCmd szope://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVZopeSuffixes"|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au BufWriteCmd zope://* exe "WebDAVPut ".expand("<afile>")
+	au BufWriteCmd szope://* exe "WebDAVPut ".expand("<afile>")
 endif
 " }}}
+" ---------------------------------------------------------------------
+" Auto commands for WebDAV {{{
+"
+" Handles transparent reading and writing of WebDAV urls
+"
+if version >= 600
+	augroup WebDAV
+	au!
+	au BufReadCmd webdav://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au BufReadCmd swebdav://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au FileReadCmd webdav://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au FileReadCmd swebdav://* exe "doau BufReadPre ".expand("<afile>")|exe "WebDAVGet ".expand("<afile>")|exe "doau BufReadPost ".expand("<afile>")
+	au BufWriteCmd webdav://* exe "WebDAVPut ".expand("<afile>")
+	au BufWriteCmd swebdav://* exe "WebDAVPut ".expand("<afile>")
+endif
+" }}}
+
+
 
